@@ -164,7 +164,7 @@ button:disabled{opacity:.55}
 
 <header>
   <div class="brand">📷 Siger WEST GKKD</div>
-  <div class="sub">Live Scanner • HP Android • Laptop Webcam</div>
+  <div class="sub">Live Scanner • Fast Send V8 • HP & Laptop</div>
 </header>
 
 <div class="content">
@@ -243,7 +243,7 @@ button:disabled{opacity:.55}
     </div>
 
     <div class="hint">
-      Kamera tetap hidup setelah scan berhasil. Scanner siap membaca QR jemaat berikutnya tanpa menekan tombol lagi.
+      Mode V8 Fast Send: QR berikutnya dapat langsung dipindai tanpa menunggu penyimpanan QR sebelumnya selesai.
     </div>
 
   </div>
@@ -260,6 +260,8 @@ var cameras = [];
 var selectedIndex = 0;
 var running = false;
 var processing = false;
+var lastAnyScanAt = 0;
+var pendingScans = {};
 var lastText = '';
 var lastAt = 0;
 var pendingScanId = '';
@@ -784,81 +786,36 @@ async function restartSelectedCamera(){
 }
 
 function onDecoded(text){
-  var now =
-    Date.now();
+  var now = Date.now();
 
-  if(processing){
+  if (now - lastAnyScanAt < 350) return;
+  if (text === lastText && now - lastAt < 1400) return;
+
+  lastAnyScanAt = now;
+  lastText = text;
+  lastAt = now;
+
+  var scanId = 'SCAN-' + Date.now() + '-' + Math.random().toString(36).substring(2);
+  pendingScans[scanId] = { text:text, time:now };
+
+  showResult('info', 'Mengirim QR...', text);
+
+  var sent = sendToMain({
+    type:'SIGER_SCAN', scanId:scanId, qr:text,
+    date:el('date').value, worship:el('worship').value
+  });
+
+  if (!sent) {
+    delete pendingScans[scanId];
     return;
   }
 
-  if(
-    text === lastText &&
-    now - lastAt < 2500
-  ){
-    return;
-  }
-
-  lastText =
-    text;
-
-  lastAt =
-    now;
-
-  processing =
-    true;
-
-  pendingScanId =
-    'SCAN-' +
-    Date.now() +
-    '-' +
-    Math.random()
-      .toString(36)
-      .substring(2);
-
-  showResult(
-    'info',
-    'Memproses...',
-    text
-  );
-
-  var sent =
-    sendToMain({
-      type:'SIGER_SCAN',
-      scanId:
-        pendingScanId,
-      qr:
-        text,
-      date:
-        el('date').value,
-      worship:
-        el('worship').value
-    });
-
-  if(!sent){
-    processing = false;
-  }
-
-  setTimeout(
-    function(){
-      if(
-        processing &&
-        pendingScanId
-      ){
-        processing =
-          false;
-
-        pendingScanId =
-          '';
-
-        showResult(
-          'warn',
-          'Aplikasi utama belum menjawab',
-          'Pastikan tab Siger WEST GKKD masih terbuka.'
-        );
-      }
-    },
-    12000
-  );
+  setTimeout(function(){
+    if (pendingScans[scanId]) {
+      delete pendingScans[scanId];
+      showResult('warn', 'Belum ada jawaban', 'Pastikan tab Siger WEST GKKD masih terbuka.');
+    }
+  }, 12000);
 }
 
 window.addEventListener(
@@ -902,21 +859,31 @@ window.addEventListener(
     }
 
     if(
+      data.type ===
+      'SIGER_SCAN_ACK'
+    ){
+      var ackMember = data.member || {};
+      showResult(
+        'info',
+        '↗ ' + (ackMember.nama || 'QR diterima'),
+        data.message || 'Menyimpan absensi...'
+      );
+      return;
+    }
+
+    if(
       data.type !==
       'SIGER_SCAN_RESULT'
     ){
       return;
     }
 
-    if(
-      data.scanId !==
-      pendingScanId
-    ){
-      return;
-    }
-
     var result =
       data.result || {};
+
+    if(data.scanId && pendingScans[data.scanId]){
+      delete pendingScans[data.scanId];
+    }
 
     if(result.ok){
       showResult(
@@ -990,16 +957,7 @@ window.addEventListener(
       beep(220);
     }
 
-    pendingScanId =
-      '';
 
-    setTimeout(
-      function(){
-        processing =
-          false;
-      },
-      650
-    );
   }
 );
 
